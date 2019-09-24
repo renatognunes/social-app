@@ -30,8 +30,6 @@ exports.validateSignUpData = (data) => {
     errors,
     valid: Object.keys(errors).length === 0 ? true : false,
   }
-  
-  // if (Object.keys(errors).length > 0) return res.status(400).json(errors);
 }
 
 exports.validateLoginData = (data) => {
@@ -45,4 +43,21 @@ exports.validateLoginData = (data) => {
     errors,
     valid: Object.keys(errors).length === 0 ? true : false,
   }
+}
+
+
+// Check if User details were submit, if not they data won't be add to the database.
+exports.reduceUserDetails = (data) => {
+  let userDetails = {};
+
+  if(!isEmpty(data.bio.trim())) userDetails.bio = data.bio;
+  if(!isEmpty(data.website.trim())) {
+    // https://website.com
+    if(data.website.trim().substring(0, 4) !== 'http') {
+      userDetails.website = `http://${data.website.trim()}`;
+    } else userDetails.website = data.website;
+  }
+  if(!isEmpty(data.location.trim())) userDetails.location = data.location;
+
+  return userDetails;
 }

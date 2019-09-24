@@ -2,7 +2,7 @@ const { db, admin } = require('../util/admin');
 const firebase = require('firebase');
 const config = require('../util/config');
 
-const { validateSignUpData, validateLoginData} = require('../util/validators');
+const { validateSignUpData, validateLoginData, reduceUserDetails} = require('../util/validators');
 
 firebase.initializeApp(config);
 
@@ -95,6 +95,43 @@ exports.login = (req, res) => {
     });
 }
 
+exports.addUserDetails = (req, res) => {
+  let userDetails = reduceUserDetails(req.body);
+
+  db.doc(`/users/${req.user.handle}`).update(userDetails)
+    .then(() => {
+      return res.json({ message: "Details added successfully"})
+    })
+    .catch(err => {
+      console.error(err);
+      return res.status(500).json({ error: err.code });
+    })
+}
+
+// Get user data (Credentials, Details and likes)
+exports.getAuthenticatedUser = (req, res) => {
+  let userData = {};
+
+  db.doc(`/users/${req.user.handle}`).get()
+    .then(doc => {
+      if(doc.exists) {
+        userData.credentials = doc.data();
+        return db.collection('likes').where('userHandle', '==', req.user.handle).get()
+      }
+    })
+    .then(data => {
+      userData.likes = [];
+      data.forEach(doc => {
+        userData.likes.push(doc.data());
+      });
+      return res.json(userData);
+    })
+    .catch(err => {
+      console.error(err);
+      return res.status(500).json({error: err.code})
+    });
+}
+
 exports.uploadImage = (req, res) => {
   const BusBoy = require('busboy');
   const path = require('path');
@@ -107,9 +144,11 @@ exports.uploadImage = (req, res) => {
   let imageToBeUploaded = {};
 
   busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
-    console.log(fieldname);
-    console.log(filename);
-    console.log(mimetype);
+
+    // Check file format
+    if(mimetype !== 'image/jpeg' && mimetype !== 'image/png') {
+      return res.status(400).json({ error: "Wrong file format submitted" });
+    }
 
     // my.image.png
     const imageExtension = filename.split(".")[filename.split('.').length - 1];
@@ -119,6 +158,7 @@ exports.uploadImage = (req, res) => {
     imageToBeUploaded = { filepath, mimetype };
     file.pipe(fs.createWriteStream(filepath));
   });
+  // Upload image to Firebase Storage
   busboy.on("finish", () => {
     admin.storage().bucket(`${config.storageBucket}`).upload(imageToBeUploaded.filepath, {
       resumable: false,
@@ -128,6 +168,7 @@ exports.uploadImage = (req, res) => {
         }
       }
     })
+    // Add the image url stored in the firebase storage to the user document.
     .then(() => {
       const imageUrl = `https://firebasestorage.googleapis.com/v0/b/${config.storageBucket}/o/${imageFileName}?alt=media`;
       return db.doc(`/users/${req.user.handle}`).update({ imageUrl });
