@@ -34,7 +34,7 @@ exports.post = (req, res) => {
     .add(newPost)
     .then(doc => {
       const resPost = newPost;
-      resPost.postId = doc.id; 
+      resPost.postId = doc.id;
       res.json(resPost);
     })
     .catch(err => {
@@ -42,7 +42,6 @@ exports.post = (req, res) => {
       console.error(err);
     });
 };
-
 
 // Fetch One Post
 exports.getPost = (req, res) => {
@@ -76,27 +75,147 @@ exports.getPost = (req, res) => {
 
 // Comment on a Post
 exports.commentOnPost = (req, res) => {
-  if(req.body.body.trim() === '') return res.status(400).json({ error: "Must not be empty"})
+  if (req.body.body.trim() === "")
+    return res.status(400).json({ error: "Must not be empty" });
 
   const newComment = {
     body: req.body.body,
     postId: req.params.postId,
     createdAt: new Date().toISOString(),
     userHandle: req.user.handle,
-    userImage: req.user.imageUrl,
+    userImage: req.user.imageUrl
   };
 
-  db.doc(`/posts/${req.params.postId}`).get()
+  db.doc(`/posts/${req.params.postId}`)
+    .get()
     .then(doc => {
-      if(!doc.exists) {
-        return res.status(404).json({ error: "Post not found"})
+      if (!doc.exists) {
+        return res.status(404).json({ error: "Post not found" });
       }
-      return db.collection('comments').add(newComment)
+      return doc.ref.update({ commentCount: doc.data().commentCount + 1 });
     })
-    .then(() => 
-    res.json(newComment))
+    .then(() => {
+      return db.collection("comments").add(newComment);
+    })
+    .then(() => res.json(newComment))
     .catch(err => {
       console.error(err);
-      return res.status(500).json({ error: 'Something went wrong' })
+      return res.status(500).json({ error: "Something went wrong" });
+    });
+};
+
+// Link a Post
+exports.likePost = (req, res) => {
+  const likeDocument = db
+    .collection("likes")
+    .where("userHandle", "==", req.user.handle)
+    .where("postId", "==", req.params.postId)
+    .limit(1);
+
+  const postDocument = db.doc(`/posts/${req.params.postId}`);
+
+  let postData;
+
+  postDocument
+    .get()
+    .then(doc => {
+      if (doc.exists) {
+        postData = doc.data();
+        postData.postId = doc.id;
+        return likeDocument.get();
+      } else {
+        return res.status(404).json({ error: "Post not found" });
+      }
     })
+    .then(data => {
+      if (data.empty) {
+        return db
+          .collection("likes")
+          .add({
+            postId: req.params.postId,
+            userHandle: req.user.handle
+          })
+          .then(() => {
+            postData.likeCount++;
+            return postDocument.update({ likeCount: postData.likeCount });
+          })
+          .then(() => {
+            return res.json({ postData });
+          });
+      } else {
+        return res.status(400).json({ error: "Post already liked" });
+      }
+    })
+    .catch(err => {
+      console.error(err);
+      return res.status(500).json({ error: err.code });
+    });
+};
+
+// Unlike a Post
+exports.unlikePost = (req, res) => {
+  const likeDocument = db
+    .collection("likes")
+    .where("userHandle", "==", req.user.handle)
+    .where("postId", "==", req.params.postId)
+    .limit(1);
+
+  const postDocument = db.doc(`/posts/${req.params.postId}`);
+
+  let postData;
+
+  postDocument
+    .get()
+    .then(doc => {
+      if (doc.exists) {
+        postData = doc.data();
+        postData.postId = doc.id;
+        return likeDocument.get();
+      } else {
+        return res.status(404).json({ error: "Post not found" });
+      }
+    })
+    .then(data => {
+      if (data.empty) {
+        return res.status(400).json({ error: "Post not liked" });
+      } else {
+        return db
+          .doc(`/likes/${data.docs[0].id}`)
+          .delete()
+          .then(() => {
+            postData.likeCount--;
+            return postDocument.update({ likeCount: postData.likeCount });
+          })
+          .then(() => {
+            return res.json(postData);
+          });
+      }
+    })
+    .catch(err => {
+      console.error(err);
+      return res.status(500).json({ error: err.code });
+    });
+};
+
+// Delete Post
+exports.deletePost = (req, res) => {
+  const postDocument = db.doc(`/posts/${req.params.postId}`);
+  postDocument.get()
+    .then(doc => {
+      if(!doc.exists) {
+        return res.status(404).json({ error: "Post not found" });
+      }
+      if(doc.data().userHandle !== req.user.handle) {
+        return res.status(403).json({ error: "Delete Unauthorized"})
+      } else {
+        return postDocument.delete()
+      }
+    })
+    .then(() => {
+      res.json({ message: "Post deleted successfully" });
+    })
+    .catch(err => {
+      console.error(err);
+      return res.status(500).json({ error: err.code });
+    });
 }
