@@ -39,12 +39,11 @@ app.post("/login", login);
 app.post("/user/image", tokenAuth, uploadImage);
 app.post("/user", tokenAuth, addUserDetails);
 app.get("/user", tokenAuth, getAuthenticatedUser);
-app.get('/user/:handle', getUserDetails);
+app.get("/user/:handle", getUserDetails);
 app.post("/notifications", tokenAuth, markNotificationsRead);
 
 // Exporting the Express routes to Firebase: https://baseurl.com/api/
 exports.api = functions.https.onRequest(app);
-
 
 // FIREBASE DB TRIGGERS (Need to deploy)
 // run firebase deploy in the socialapp-functions/functions folder || to work
@@ -53,10 +52,14 @@ exports.api = functions.https.onRequest(app);
 exports.createNotificationOnLike = functions.firestore
   .document("likes/{id}")
   .onCreate(snapshot => {
-    db.doc(`/posts/${snapshot.data().postId}`)
+    return db
+      .doc(`/posts/${snapshot.data().postId}`)
       .get()
       .then(doc => {
-        if (doc.exists) {
+        if (
+          doc.exists &&
+          doc.data().userHandle !== snapshot.data().userHandle
+        ) {
           return db.doc(`/notifications/${snapshot.id}`).set({
             createdAt: new Date().toISOString(),
             recipient: doc.data().userHandle,
@@ -67,52 +70,111 @@ exports.createNotificationOnLike = functions.firestore
           });
         }
       })
-      .then(() => {
-        return;
-      })
       .catch(err => {
         console.log(err);
-        return;
       });
   });
 
-  // Delete Notifications On Unlike
-  exports.deleteNotificationOnUnLike = functions.firestore.document('likes/{id}')
-    .onDelete((snapshot) => {
-      db.doc(`/notifications/${snapshot.id}`)
+// Delete Notifications On Unlike
+exports.deleteNotificationOnUnLike = functions.firestore
+  .document("likes/{id}")
+  .onDelete(snapshot => {
+    return db
+      .doc(`/notifications/${snapshot.id}`)
       .delete()
-      .then(() => {
-        return;
+      .catch(err => {
+        console.log(err);
+      });
+  });
+
+// Comments Notifications
+exports.createNotificationOnComment = functions.firestore
+  .document("comments/{id}")
+  .onCreate(snapshot => {
+    return db
+      .doc(`/posts/${snapshot.data().postId}`)
+      .get()
+      .then(doc => {
+        if (
+          doc.exists &&
+          doc.data().userHandle !== snapshot.data().userHandle
+        ) {
+          return db.doc(`/notifications/${snapshot.id}`).set({
+            createdAt: new Date().toISOString(),
+            recipient: doc.data().userHandle,
+            sender: snapshot.data().userHandle,
+            type: "comment",
+            read: false,
+            postId: doc.id
+          });
+        }
       })
       .catch(err => {
         console.log(err);
-        return;
-      })
-    })
+      });
+  });
 
-  // Comments Notifications
-exports.createNotificationOnComment = functions.firestore
-.document("comments/{id}")
-.onCreate(snapshot => {
-  db.doc(`/posts/${snapshot.data().postId}`)
-    .get()
-    .then(doc => {
-      if (doc.exists) {
-        return db.doc(`/notifications/${snapshot.id}`).set({
-          createdAt: new Date().toISOString(),
-          recipient: doc.data().userHandle,
-          sender: snapshot.data().userHandle,
-          type: "comment",
-          read: false,
-          postId: doc.id
+// Update User Image through the App when User change image profile
+exports.onUserImageChange = functions.firestore
+  .document("/users/{userId}")
+  .onUpdate(change => {
+    console.log(change.before.data());
+    console.log(change.after.data());
+    if (change.before.data().imageUrl !== change.after.data().imageUrl) {
+      console.log("Image has changed");
+      const batch = db.batch();
+      return db
+        .collection("posts")
+        .where("userHandle", "==", change.before.data().handle)
+        .get()
+        .then(data => {
+          data.forEach(doc => {
+            const post = db.doc(`/posts/${doc.id}`);
+            batch.update(post, { userImage: change.after.data().imageUrl });
+          });
+          return batch.commit();
+        })
+        .catch(err => {
+          console.log(err);
         });
-      }
-    })
-    .then(() => {
-      return;
-    })
-    .catch(err => {
-      console.log(err);
-      return;
-    });
-});
+    } else return true;
+  });
+
+// Delete all related likes/comments/notifications from a Post when deleted
+exports.onPostDelete = functions.firestore
+  .document("/posts/{postId}")
+  .onDelete((snapshot, context) => {
+    const postId = context.params.postId;
+    const batch = db.batch();
+    return db
+      .collection("comments")
+      .where("postId", "==", postId)
+      .get()
+      .then(data => {
+        data.forEach(doc => {
+          batch.delete(db.doc(`/comments/${doc.id}`));
+        });
+        return db
+          .collection("likes")
+          .where("postId", "==", postId)
+          .get();
+      })
+      .then(data => {
+        data.forEach(doc => {
+          batch.delete(db.doc(`/likes/${doc.id}`));
+        });
+        return db
+          .collection("notifications")
+          .where("postId", "==", postId)
+          .get();
+      })
+      .then(data => {
+        data.forEach(doc => {
+          batch.delete(db.doc(`/notifications/${doc.id}`));
+        });
+        return batch.commit();
+      })
+      .catch(err => {
+        console.log(err);
+      });
+  });
