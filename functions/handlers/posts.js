@@ -23,6 +23,9 @@ exports.getAllPosts = (req, res) => {
 };
 
 exports.post = (req, res) => {
+  if (req.body.body.trim() === "") {
+    return res.status(400).json({ body: "Body must not be empty" });
+  }
   // This is the document properties to be post in the db.
   const newPost = {
     body: req.body.body, // the second body here is because we have a body property in the db.
@@ -203,15 +206,16 @@ exports.unlikePost = (req, res) => {
 // Delete Post
 exports.deletePost = (req, res) => {
   const postDocument = db.doc(`/posts/${req.params.postId}`);
-  postDocument.get()
+  postDocument
+    .get()
     .then(doc => {
-      if(!doc.exists) {
+      if (!doc.exists) {
         return res.status(404).json({ error: "Post not found" });
       }
-      if(doc.data().userHandle !== req.user.handle) {
-        return res.status(403).json({ error: "Delete Unauthorized"})
+      if (doc.data().userHandle !== req.user.handle) {
+        return res.status(403).json({ error: "Delete Unauthorized" });
       } else {
-        return postDocument.delete()
+        return postDocument.delete();
       }
     })
     .then(() => {
@@ -221,4 +225,4 @@ exports.deletePost = (req, res) => {
       console.error(err);
       return res.status(500).json({ error: err.code });
     });
-}
+};
